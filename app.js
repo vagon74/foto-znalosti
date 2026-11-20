@@ -5,7 +5,7 @@
  * upload do 4 MB / po částech (storage/docStore.ts), offline fronta. */
 'use strict';
 
-const VERSION = '1.0.0';
+const VERSION = '1.0.1';
 const cfg = window.FOTO_CONFIG || {};
 const DEMO = new URLSearchParams(location.search).has('demo'); // náhled bez přihlášení, upload se jen simuluje
 const GRAPH = 'https://graph.microsoft.com/v1.0';
@@ -60,7 +60,7 @@ async function tokenRequest(params) {
 async function handleRedirect() {
   const p = new URLSearchParams(location.search);
   if (!p.has('code') && !p.has('error')) return;
-  history.replaceState(null, '', REDIRECT_URI);
+  window.history.replaceState(null, '', REDIRECT_URI);
   if (p.has('error')) { toast(`Přihlášení se nepovedlo: ${p.get('error_description') || p.get('error')}`); return; }
   const saved = JSON.parse(localStorage.getItem('fz.pkce') || '{}');
   localStorage.removeItem('fz.pkce');
@@ -242,8 +242,8 @@ async function pump() {
 
 /* ---------------- historie (jen metadata, žádné fotky) ---------------- */
 
-function history() { try { return JSON.parse(localStorage.getItem('fz.history')) || []; } catch { return []; } }
-function addHistory(h) { localStorage.setItem('fz.history', JSON.stringify([h, ...history()].slice(0, 30))); }
+function sentHistory() { try { return JSON.parse(localStorage.getItem('fz.history')) || []; } catch { return []; } }
+function addHistory(h) { localStorage.setItem('fz.history', JSON.stringify([h, ...sentHistory()].slice(0, 30))); }
 
 /* ---------------- UI ---------------- */
 
@@ -285,7 +285,7 @@ async function render() {
   }
   $('netState').textContent = navigator.onLine ? '' : 'Bez připojení – fotky počkají v aplikaci a odešlou se samy.';
   const h = $('history'); h.textContent = '';
-  const hist = history();
+  const hist = sentHistory();
   if (!hist.length) h.append(li('Zatím nic.', null, 'empty'));
   for (const x of hist.slice(0, 10)) {
     h.append(li(`${KIND_LABEL[x.kind]} · ${fmtTime(x.at)}${x.pages > 1 ? ` · ${x.pages} str.` : ''}${x.note ? ' · ' + x.note : ''}`, '✓ v OneDrive', null, 'ok'));
