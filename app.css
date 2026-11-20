@@ -27,6 +27,8 @@ button:active { opacity: .7; }
 .kinds { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
 [hidden] { display: none !important; }
 .chip { background: var(--panel); border: 1px solid var(--line); padding: 8px 12px; border-radius: 999px; font-size: 14px; }
+.suggest-box { margin: 8px 0 0; }
+.chip.suggest { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--accent); }
 .chip.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
 .pages { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
 .page { position: relative; border-radius: 12px; overflow: hidden; background: #000; aspect-ratio: 3/4; }

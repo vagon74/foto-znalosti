@@ -5,7 +5,7 @@
  * upload do 4 MB / po částech (storage/docStore.ts), offline fronta. */
 'use strict';
 
-const VERSION = '1.0.1';
+const VERSION = '1.1.0';
 const cfg = window.FOTO_CONFIG || {};
 const DEMO = new URLSearchParams(location.search).has('demo'); // náhled bez přihlášení, upload se jen simuluje
 const GRAPH = 'https://graph.microsoft.com/v1.0';
@@ -133,6 +133,64 @@ async function toJpeg(file, max, quality = 0.85) {
 
 const extOf = (blob) => ({ 'image/jpeg': 'jpg', 'image/png': 'png', 'image/heic': 'heic', 'image/heif': 'heif', 'image/webp': 'webp' }[blob.type] || 'jpg');
 
+/* ---------------- datum pořízení (EXIF) ----------------
+ * Zmenšením přes canvas se EXIF ztratí, proto se datum čte z originálu předem.
+ * Vrací { at: 'RRRR-MM-DDTHH:MM:SS+01:00', src: 'exif' | 'fotoaparat' | 'soubor' }. */
+
+async function exifDate(file) {
+  try {
+    const v = new DataView(await file.slice(0, 256 * 1024).arrayBuffer());
+    if (v.getUint16(0) !== 0xffd8) return null; // jen JPEG
+    let p = 2;
+    while (p + 4 < v.byteLength) {
+      const marker = v.getUint16(p), len = v.getUint16(p + 2);
+      if (marker === 0xffe1 && v.getUint32(p + 4) === 0x45786966) return parseTiff(v, p + 10); // "Exif"
+      if ((marker & 0xff00) !== 0xff00 || marker === 0xffda) return null;
+      p += 2 + len;
+    }
+  } catch { /* poškozený soubor – použije se náhradní datum */ }
+  return null;
+}
+
+function parseTiff(v, t) {
+  const le = v.getUint16(t) === 0x4949;
+  const u16 = (o) => v.getUint16(t + o, le), u32 = (o) => v.getUint32(t + o, le);
+  const ascii = (entry) => {
+    const n = u32(entry + 4); const off = n > 4 ? u32(entry + 8) : entry + 8;
+    let s = ''; for (let i = 0; i < n - 1; i++) s += String.fromCharCode(v.getUint8(t + off + i));
+    return s.trim();
+  };
+  const ifd = (off) => {
+    const tags = {}; const n = u16(off);
+    for (let i = 0; i < n; i++) { const e = off + 2 + i * 12; tags[u16(e)] = e; }
+    return tags;
+  };
+  const ifd0 = ifd(u32(4));
+  const ex = ifd0[0x8769] ? ifd(u32(ifd0[0x8769] + 8)) : {};
+  const raw = ex[0x9003] ? ascii(ex[0x9003]) : ifd0[0x0132] ? ascii(ifd0[0x0132]) : '';
+  const m = raw.match(/^(\d{4}):(\d\d):(\d\d) (\d\d):(\d\d):(\d\d)/);
+  if (!m || m[1] === '0000') return null;
+  const offset = ex[0x9011] ? ascii(ex[0x9011]) : '';
+  const local = `${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}`;
+  if (/^[+-]\d\d:\d\d$/.test(offset)) return local + offset;
+  // bez časové zóny = místní čas zařízení
+  return isoLocal(new Date(+m[1], m[2] - 1, +m[3], +m[4], +m[5], +m[6]));
+}
+
+/** ISO s místní časovou zónou, např. 2026-11-11T14:16:52+01:00 */
+function isoLocal(d) {
+  const p = (n) => String(Math.abs(n)).padStart(2, '0');
+  const tz = -d.getTimezoneOffset();
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}${tz >= 0 ? '+' : '-'}${p(Math.trunc(tz / 60))}:${p(tz % 60)}`;
+}
+
+async function takenAt(file, fromCamera) {
+  const exif = await exifDate(file);
+  if (exif) return { at: exif, src: 'exif' };
+  if (fromCamera) return { at: isoLocal(new Date()), src: 'fotoaparat' };
+  return { at: isoLocal(new Date(file.lastModified || Date.now())), src: 'soubor' };
+}
+
 /* ---------------- fronta v IndexedDB ---------------- */
 
 let dbP;
@@ -163,12 +221,14 @@ function stamp(d = new Date()) {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
 }
 
+/** pages: [{ blob, taken: { at, src } }] – jméno souboru se odvozuje z data pořízení první strany */
 async function enqueue(pages, kind, note) {
   const now = new Date();
-  const base = `${stamp(now)}_${randomStr(3).replace(/[-_]/g, 'x').slice(0, 4)}${kind !== 'auto' ? '_' + kind : ''}`;
+  const first = [...pages].sort((a, b) => Date.parse(a.taken.at) - Date.parse(b.taken.at))[0];
+  const base = `${stamp(new Date(first.taken.at))}_${randomStr(3).replace(/[-_]/g, 'x').slice(0, 4)}${kind !== 'auto' ? '_' + kind : ''}`;
   const item = {
     id: base, base, kind, note, createdAt: now.toISOString(), folder: settings.folder,
-    pages: pages.map((blob, i) => ({ blob, name: `${base}${pages.length > 1 ? '-' + (i + 1) : ''}.${extOf(blob)}`, done: false })),
+    pages: pages.map((pg, i) => ({ blob: pg.blob, taken: pg.taken, name: `${base}${pages.length > 1 ? '-' + (i + 1) : ''}.${extOf(pg.blob)}`, done: false })),
     metaDone: false, error: null,
   };
   await qPut(item);
@@ -220,9 +280,14 @@ async function pump() {
           await qPut(item); render();
         }
         // metadata až nakonec – na PC znamenají „snímek je kompletní, zpracuj ho“
+        const taken = item.pages.map((p) => p.taken?.at).filter(Boolean).sort((a, b) => Date.parse(a) - Date.parse(b));
         const meta = {
-          id: item.base, vytvoreno: item.createdAt, typ: item.kind, poznamka: item.note || '',
-          strany: item.pages.map((p) => p.name), zdroj: `Foto do znalostí ${VERSION} (iPhone)`,
+          id: item.base, typ: item.kind, poznamka: item.note || '',
+          porizeno: taken[0] || null,             // HLAVNÍ datum = pořízení první (nejstarší) fotky
+          porizeno_do: taken[taken.length - 1] || null,
+          nahrano: isoLocal(new Date()),          // jen doplňková informace
+          strany: item.pages.map((p) => ({ soubor: p.name, porizeno: p.taken?.at || null, zdroj_data: p.taken?.src || null })),
+          zdroj: `Foto do znalostí ${VERSION} (iPhone)`,
         };
         await putFile(item.folder, `${item.base}.json`, new Blob([JSON.stringify(meta, null, 2)], { type: 'application/json' }));
         await qDel(item.id);
@@ -269,6 +334,7 @@ async function render() {
   $('kinds').hidden = !logged;
   $('captureView').hidden = !logged || reviewing;
   $('reviewView').hidden = !reviewing;
+  if (reviewing) renderNoteSuggest();
   $('statusView').hidden = reviewing;
   $('settingsView').hidden = reviewing;
   $('logoutBtn').hidden = !logged || DEMO;
@@ -303,28 +369,51 @@ const fmtTime = (iso) => new Date(iso).toLocaleString('cs-CZ', { day: 'numeric',
 function renderDraft() {
   draftUrls.forEach(URL.revokeObjectURL); draftUrls = [];
   const box = $('pages'); box.textContent = '';
-  draft.forEach((blob, i) => {
+  draft.forEach(({ blob, taken }, i) => {
     const url = URL.createObjectURL(blob); draftUrls.push(url);
     const d = document.createElement('div'); d.className = 'page';
     const img = document.createElement('img'); img.src = url; img.alt = `Strana ${i + 1}`;
     const del = document.createElement('button'); del.className = 'del'; del.textContent = '✕'; del.setAttribute('aria-label', 'Odebrat stranu');
     del.onclick = () => { draft.splice(i, 1); renderDraft(); render(); };
-    const num = document.createElement('span'); num.className = 'num'; num.textContent = i + 1;
+    const num = document.createElement('span'); num.className = 'num';
+    num.textContent = `${i + 1} · ${fmtTime(taken.at)}`;
+    num.title = { exif: 'datum pořízení z fotky', fotoaparat: 'vyfoceno teď', soubor: 'datum souboru (fotka nemá EXIF)' }[taken.src];
     d.append(img, del, num); box.append(d);
   });
 }
 
-async function addFiles(files) {
+async function addFiles(files, fromCamera = false) {
   const list = [...(files || [])];
   if (!list.length) return;
   try {
-    for (const f of list) draft.push(await toJpeg(f, settings.size));
+    for (const f of list) {
+      const taken = await takenAt(f, fromCamera); // EXIF číst z originálu – po zmenšení už není
+      draft.push({ blob: await toJpeg(f, settings.size), taken });
+    }
   } catch (e) { toast(e.message); }
   renderDraft(); render();
 }
 
 function clearDraft() {
   draft = []; renderDraft(); $('note').value = ''; render();
+}
+
+/* poslední poznámky – nabídnou se při dalším focení (např. stejná akce) */
+function recentNotes() { try { return JSON.parse(localStorage.getItem('fz.notes')) || []; } catch { return []; } }
+function rememberNote(n) {
+  if (!n) return;
+  localStorage.setItem('fz.notes', JSON.stringify([n, ...recentNotes().filter((x) => x !== n)].slice(0, 5)));
+}
+function renderNoteSuggest() {
+  const box = $('noteSuggest'); box.textContent = '';
+  const cur = $('note').value.trim();
+  for (const n of recentNotes()) {
+    if (n === cur) continue;
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'chip suggest'; b.textContent = `↺ ${n}`;
+    b.onclick = () => { $('note').value = n; renderNoteSuggest(); };
+    box.append(b);
+  }
+  box.hidden = !box.childElementCount;
 }
 
 function bind() {
@@ -337,7 +426,7 @@ function bind() {
   $('addPageBtn').onclick = () => $('cameraInp').click();
   $('galleryBtn').onclick = () => $('galleryInp').click();
   for (const id of ['cameraInp', 'galleryInp']) {
-    $(id).onchange = (e) => { addFiles(e.target.files).finally(() => { e.target.value = ''; }); };
+    $(id).onchange = (e) => { addFiles(e.target.files, id === 'cameraInp').finally(() => { e.target.value = ''; }); };
   }
   $('kinds').onclick = (e) => {
     const k = e.target.closest('[data-kind]')?.dataset.kind; if (!k) return;
@@ -347,7 +436,9 @@ function bind() {
   $('sendBtn').onclick = async () => {
     $('sendBtn').disabled = true;
     try {
-      await enqueue(draft, settings.kind, $('note').value.trim());
+      const note = $('note').value.trim();
+      await enqueue(draft, settings.kind, note);
+      rememberNote(note);
       clearDraft();
       toast(navigator.onLine ? 'Odesílám do OneDrive…' : 'Uloženo ve frontě, odešle se po připojení.');
       pump();
