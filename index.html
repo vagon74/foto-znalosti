@@ -14,18 +14,24 @@
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
-<header>
+<!-- Úvodní obrazovka – před přihlášením se nic jiného nezobrazuje -->
+<section id="loginView" class="splash" hidden>
+  <div class="splash-card">
+    <img src="icons/icon-192.png" alt="" class="splash-logo">
+    <h1>Foto do znalostí</h1>
+    <p class="lead">Přihlaste se účtem Microsoft.</p>
+    <p id="loginPending" class="notice" hidden></p>
+    <button id="loginBtn" class="primary big">Přihlásit se účtem Microsoft</button>
+    <p id="configWarn" class="warn" hidden>V <code>config.js</code> chybí Client ID – viz README.md.</p>
+  </div>
+</section>
+
+<header id="appHeader" hidden>
   <h1>Foto do znalostí</h1>
   <button id="accountBtn" class="link" hidden></button>
 </header>
 
-<main>
-  <!-- Přihlášení -->
-  <section id="loginView" hidden>
-    <p class="lead">Fotky se odešlou rovnou do vašeho OneDrive, do galerie iPhonu se neukládají.</p>
-    <button id="loginBtn" class="primary big">Přihlásit k OneDrive</button>
-    <p id="configWarn" class="warn" hidden>V <code>config.js</code> chybí Client ID – viz README.md.</p>
-  </section>
+<main id="appMain" hidden>
 
   <!-- Focení -->
   <div class="kinds" id="kinds" role="radiogroup" aria-label="Typ snímku" hidden>

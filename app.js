@@ -5,7 +5,7 @@
  * upload do 4 MB / po částech (storage/docStore.ts), offline fronta. */
 'use strict';
 
-const VERSION = '1.1.0';
+const VERSION = '1.2.0';
 const cfg = window.FOTO_CONFIG || {};
 const DEMO = new URLSearchParams(location.search).has('demo'); // náhled bez přihlášení, upload se jen simuluje
 const GRAPH = 'https://graph.microsoft.com/v1.0';
@@ -328,11 +328,20 @@ function showLoginIfNeeded() { render(); }
 async function render() {
   const logged = signedIn();
   const reviewing = draft.length > 0;
+  // bez přihlášení jen úvodní obrazovka s tlačítkem (jako MOPANI Backoffice)
   $('loginView').hidden = logged;
+  $('appHeader').hidden = !logged;
+  $('appMain').hidden = !logged;
   $('configWarn').hidden = !!cfg.clientId;
   $('loginBtn').disabled = !cfg.clientId;
-  $('kinds').hidden = !logged;
-  $('captureView').hidden = !logged || reviewing;
+  if (!logged) {
+    const n = (await qAll().catch(() => [])).length;
+    $('loginPending').hidden = !n;
+    $('loginPending').textContent = `V telefonu čeká ${n} ${n === 1 ? 'neodeslaný snímek' : n < 5 ? 'neodeslané snímky' : 'neodeslaných snímků'}. Po přihlášení se odešlou.`;
+    return;
+  }
+  $('kinds').hidden = false;
+  $('captureView').hidden = reviewing;
   $('reviewView').hidden = !reviewing;
   if (reviewing) renderNoteSuggest();
   $('statusView').hidden = reviewing;

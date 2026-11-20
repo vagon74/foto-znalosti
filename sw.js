@@ -1,5 +1,5 @@
 // Cache jen pro vlastní soubory aplikace; přihlášení a Graph jdou vždy přímo na síť.
-const CACHE = 'foto-znalosti-1.1.0';
+const CACHE = 'foto-znalosti-1.2.0';
 const ASSETS = ['./', './index.html', './app.js', './app.css', './config.js', './manifest.json',
   './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'];
 
