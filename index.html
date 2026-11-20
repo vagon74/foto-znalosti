@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<title>Foto do znalostí</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f172a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Znalosti">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header>
+  <h1>Foto do znalostí</h1>
+  <button id="accountBtn" class="link" hidden></button>
+</header>
+
+<main>
+  <!-- Přihlášení -->
+  <section id="loginView" hidden>
+    <p class="lead">Fotky se odešlou rovnou do vašeho OneDrive, do galerie iPhonu se neukládají.</p>
+    <button id="loginBtn" class="primary big">Přihlásit k OneDrive</button>
+    <p id="configWarn" class="warn" hidden>V <code>config.js</code> chybí Client ID – viz README.md.</p>
+  </section>
+
+  <!-- Focení -->
+  <div class="kinds" id="kinds" role="radiogroup" aria-label="Typ snímku" hidden>
+    <button data-kind="auto" class="chip on">Automaticky</button>
+    <button data-kind="dokument" class="chip">Dokument</button>
+    <button data-kind="vizitka" class="chip">Vizitka</button>
+    <button data-kind="cedule" class="chip">Cedule</button>
+    <button data-kind="tabule" class="chip">Tabule / poznámky</button>
+  </div>
+
+  <section id="captureView" hidden>
+    <button id="shootBtn" class="primary big shoot">📷 Vyfotit</button>
+    <button id="galleryBtn" class="link">nebo vybrat existující obrázek</button>
+  </section>
+
+  <!-- Náhled před odesláním -->
+  <section id="reviewView" hidden>
+    <div id="pages" class="pages"></div>
+    <button id="addPageBtn" class="secondary">＋ Další strana</button>
+    <label class="field">Poznámka (nepovinné)
+      <textarea id="note" rows="2" placeholder="např. smlouva na plyn, vizitka z veletrhu…"></textarea>
+    </label>
+    <div class="row">
+      <button id="discardBtn" class="secondary">Zahodit</button>
+      <button id="sendBtn" class="primary">Odeslat</button>
+    </div>
+  </section>
+
+  <!-- Fronta / historie -->
+  <section id="statusView" hidden>
+    <h2>Stav</h2>
+    <p id="netState" class="muted"></p>
+    <ul id="queue" class="list"></ul>
+    <h2>Odesláno</h2>
+    <ul id="history" class="list"></ul>
+  </section>
+
+  <section id="settingsView" hidden>
+    <details>
+      <summary>Nastavení</summary>
+      <label class="field">Velikost fotky
+        <select id="sizeSel">
+          <option value="2048">2048 px (menší soubory)</option>
+          <option value="3072" selected>3072 px (doporučeno pro text)</option>
+          <option value="0">originál</option>
+        </select>
+      </label>
+      <label class="field">Složka v OneDrive
+        <input id="folderInp" type="text">
+      </label>
+      <button id="logoutBtn" class="secondary">Odhlásit</button>
+      <p class="muted small">Verze <span id="ver"></span></p>
+    </details>
+  </section>
+</main>
+
+<div id="toast" role="status" hidden></div>
+<!-- capture = fotoaparát přímo v aplikaci; taková fotka se do Fotek iPhonu neukládá -->
+<input id="cameraInp" type="file" accept="image/*" capture="environment" hidden>
+<input id="galleryInp" type="file" accept="image/*" multiple hidden>
+
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
