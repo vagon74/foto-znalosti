@@ -1,5 +1,5 @@
 // Cache jen pro vlastní soubory aplikace; přihlášení a Graph jdou vždy přímo na síť.
-const CACHE = 'foto-znalosti-1.2.1';
+const CACHE = 'foto-znalosti-1.2.2';
 const ASSETS = ['./', './index.html', './app.js', './app.css', './config.js', './manifest.json',
   './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'];
 
@@ -19,7 +19,7 @@ self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET' || url.origin !== location.origin) return;
   const key = url.searchParams.has('code') || url.searchParams.has('demo') ? './index.html' : e.request;
   e.respondWith(
-    fetch(e.request)
+    fetch(e.request, { cache: 'no-cache' }) // obejít 10min HTTP cache GitHub Pages
       .then((res) => {
         if (res.ok && !url.search) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(e.request, copy)); }
         return res;

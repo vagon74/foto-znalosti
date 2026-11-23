@@ -5,7 +5,7 @@
  * upload do 4 MB / po částech (storage/docStore.ts), offline fronta. */
 'use strict';
 
-const VERSION = '1.2.1';
+const VERSION = '1.2.2';
 const cfg = window.FOTO_CONFIG || {};
 const DEMO = new URLSearchParams(location.search).has('demo'); // náhled bez přihlášení, upload se jen simuluje
 const GRAPH = 'https://graph.microsoft.com/v1.0';
@@ -498,7 +498,11 @@ function bind() {
   $('ver').textContent = VERSION;
   addEventListener('online', () => { render(); pump(); });
   addEventListener('offline', render);
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) pump(); });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) return;
+    pump();
+    navigator.serviceWorker?.getRegistration().then((r) => r?.update()).catch(() => {}); // hledat novou verzi i po návratu do aplikace
+  });
 }
 
 function syncKinds() {
@@ -509,7 +513,14 @@ function syncKinds() {
 
 (async function main() {
   bind(); syncKinds();
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  if ('serviceWorker' in navigator) {
+    const hadSw = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(() => {});
+    // nová verze převzala řízení → jednou obnovit stránku (ne uprostřed focení, to by smazalo nafocené strany)
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (hadSw && !draft.length && !sessionStorage.getItem('fz.reloaded')) { sessionStorage.setItem('fz.reloaded', '1'); location.reload(); }
+    });
+  }
   navigator.storage?.persist?.().catch(() => {});
   try { await handleRedirect(); } catch (e) { toast(`Přihlášení se nepovedlo: ${e.message}`); }
   await render();
