@@ -5,7 +5,7 @@
  * upload do 4 MB / po částech (storage/docStore.ts), offline fronta. */
 'use strict';
 
-const VERSION = '1.2.0';
+const VERSION = '1.2.1';
 const cfg = window.FOTO_CONFIG || {};
 const DEMO = new URLSearchParams(location.search).has('demo'); // náhled bez přihlášení, upload se jen simuluje
 const GRAPH = 'https://graph.microsoft.com/v1.0';
@@ -84,10 +84,19 @@ async function getToken() {
   return nt ? nt.access : null;
 }
 
+/** fetch s časovým limitem – když iOS uspí aplikaci uprostřed požadavku, jinak by visel navždy */
+async function fetchT(url, init = {}, ms = 90000) {
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(), ms);
+  try { return await fetch(url, { ...init, signal: ac.signal }); }
+  catch (e) { throw Object.assign(new Error(e.name === 'AbortError' ? 'vypršel čas spojení' : (e.message || 'chyba sítě')), { network: true }); }
+  finally { clearTimeout(t); }
+}
+
 async function graph(path, init = {}, retry = true) {
   const token = await getToken();
   if (!token) throw Object.assign(new Error('Je potřeba se přihlásit'), { needLogin: true });
-  const res = await fetch(path.startsWith('http') ? path : GRAPH + path, { ...init, headers: { ...init.headers, Authorization: `Bearer ${token}` } });
+  const res = await fetchT(path.startsWith('http') ? path : GRAPH + path, { ...init, headers: { ...init.headers, Authorization: `Bearer ${token}` } });
   if (res.status === 401 && retry) {
     const t = loadTokens(); if (t) { t.exp = 0; saveTokens(t); }
     return graph(path, init, false);
@@ -228,7 +237,7 @@ async function enqueue(pages, kind, note) {
   const base = `${stamp(new Date(first.taken.at))}_${randomStr(3).replace(/[-_]/g, 'x').slice(0, 4)}${kind !== 'auto' ? '_' + kind : ''}`;
   const item = {
     id: base, base, kind, note, createdAt: now.toISOString(), folder: settings.folder,
-    pages: pages.map((pg, i) => ({ blob: pg.blob, taken: pg.taken, name: `${base}${pages.length > 1 ? '-' + (i + 1) : ''}.${extOf(pg.blob)}`, done: false })),
+    pages: await Promise.all(pages.map(async (pg, i) => ({ bytes: await pg.blob.arrayBuffer(), type: pg.blob.type || 'image/jpeg', taken: pg.taken, name: `${base}${pages.length > 1 ? '-' + (i + 1) : ''}.${extOf(pg.blob)}`, done: false }))),
     metaDone: false, error: null,
   };
   await qPut(item);
@@ -255,7 +264,7 @@ async function putFile(folder, name, blob) {
   const { uploadUrl } = await s.json();
   for (let start = 0; start < blob.size; start += CHUNK) {
     const end = Math.min(start + CHUNK, blob.size);
-    const res = await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Range': `bytes ${start}-${end - 1}/${blob.size}` }, body: blob.slice(start, end) });
+    const res = await fetchT(uploadUrl, { method: 'PUT', headers: { 'Content-Range': `bytes ${start}-${end - 1}/${blob.size}` }, body: blob.slice(start, end) });
     if (!res.ok && res.status !== 202) throw await graphError(res);
   }
 }
@@ -266,17 +275,31 @@ async function graphError(res) {
   return Object.assign(new Error(msg), { status: res.status });
 }
 
-let pumping = false, retryTimer = null;
+/** Data strany jako Blob. Nové položky mají `bytes` (ArrayBuffer) – Blob uložený v IndexedDB
+ *  Safari na iPhonu po znovuotevření aplikace někdy neumí přečíst (WebKitBlobResource). */
+async function pageBlob(page) {
+  if (page.bytes) return new Blob([page.bytes], { type: page.type || 'image/jpeg' });
+  if (!page.blob) throw Object.assign(new Error('fotka v telefonu chybí'), { broken: true });
+  try { return new Blob([await page.blob.arrayBuffer()], { type: page.blob.type || 'image/jpeg' }); }
+  catch { throw Object.assign(new Error('fotku v telefonu už nejde načíst – smažte ji z fronty a vyfoťte znovu'), { broken: true }); }
+}
+
+let pumping = false, pumpGen = 0, pumpAt = 0, retryTimer = null;
 async function pump() {
-  if (pumping) return;
-  pumping = true; clearTimeout(retryTimer);
+  // pojistka: běh, který visí přes 3 minuty (aplikace byla uspaná), se nahradí novým
+  if (pumping && Date.now() - pumpAt < 180000) return;
+  const gen = ++pumpGen;
+  pumping = true; pumpAt = Date.now(); clearTimeout(retryTimer);
   try {
     for (const item of (await qAll()).sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
+      if (gen !== pumpGen) return;
       try {
         for (const page of item.pages) {
           if (page.done) continue;
-          await putFile(item.folder, page.name, page.blob);
-          page.done = true; page.blob = null; // hotovou stranu hned smazat z telefonu
+          await putFile(item.folder, page.name, await pageBlob(page));
+          if (gen !== pumpGen) return;
+          page.done = true; page.blob = null; page.bytes = null; // hotovou stranu hned smazat z telefonu
+          item.error = null; pumpAt = Date.now();
           await qPut(item); render();
         }
         // metadata až nakonec – na PC znamenají „snímek je kompletní, zpracuj ho“
@@ -293,15 +316,17 @@ async function pump() {
         await qDel(item.id);
         addHistory({ base: item.base, kind: item.kind, note: item.note, pages: item.pages.length, at: new Date().toISOString() });
       } catch (e) {
+        if (gen !== pumpGen) return;
         item.error = e.needLogin ? 'čeká na přihlášení' : (navigator.onLine ? e.message : 'čeká na signál');
-        await qPut(item);
+        await qPut(item).catch(() => {});
         if (e.needLogin) { showLoginIfNeeded(); break; }
+        if (e.broken || (e.status && e.status !== 429 && e.status < 500)) continue; // vadný snímek neblokuje ostatní
         retryTimer = setTimeout(pump, 30000);
         break;
       }
     }
   } finally {
-    pumping = false; render();
+    if (gen === pumpGen) { pumping = false; render(); }
   }
 }
 
@@ -355,15 +380,27 @@ async function render() {
   if (!items.length) q.append(li('Nic nečeká na odeslání.', null, 'empty'));
   for (const it of items) {
     const done = it.pages.filter((p) => p.done).length;
-    q.append(li(`${KIND_LABEL[it.kind]} · ${fmtTime(it.createdAt)}${it.note ? ' · ' + it.note : ''}`,
-      it.error ? `⚠ ${it.error}` : `odesílám ${done}/${it.pages.length}`, null, it.error ? 'err' : 'wait'));
+    const row = li(`${KIND_LABEL[it.kind]} · ${fmtTime(it.createdAt)} · ${done}/${it.pages.length} str.${it.note ? ' · ' + it.note : ''}`,
+      it.error ? `⚠ ${it.error}` : 'odesílám…', 'qitem', it.error ? 'err' : 'wait');
+    row.onclick = () => queueAction(it);
+    q.append(row);
   }
+  if (items.length) q.append(li('Ťuknutím na snímek ho můžete odeslat znovu nebo smazat z fronty.', null, 'empty'));
   $('netState').textContent = navigator.onLine ? '' : 'Bez připojení – fotky počkají v aplikaci a odešlou se samy.';
   const h = $('history'); h.textContent = '';
   const hist = sentHistory();
   if (!hist.length) h.append(li('Zatím nic.', null, 'empty'));
   for (const x of hist.slice(0, 10)) {
     h.append(li(`${KIND_LABEL[x.kind]} · ${fmtTime(x.at)}${x.pages > 1 ? ` · ${x.pages} str.` : ''}${x.note ? ' · ' + x.note : ''}`, '✓ v OneDrive', null, 'ok'));
+  }
+}
+
+async function queueAction(it) {
+  if (confirm(`Odeslat „${KIND_LABEL[it.kind]}${it.note ? ' · ' + it.note : ''}“ znovu?\n\n(Zrušit = nabídne smazání z fronty)`)) {
+    pumping = false; pumpGen++; pump(); return;
+  }
+  if (confirm('Smazat tento snímek z fronty v telefonu? Strany, které už jsou v OneDrive, tam zůstanou.')) {
+    await qDel(it.id); render(); pump();
   }
 }
 

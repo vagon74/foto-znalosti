@@ -62,3 +62,4 @@ code { font-size: 13px; }
 .splash-card h1 { margin-bottom: 4px; }
 .splash-card .lead { margin: 0 0 22px; }
 .notice { background: rgba(251,191,36,.12); color: var(--warn); border-radius: 10px; padding: 8px 10px; font-size: 14px; margin: 0 0 16px; }
+.list li.qitem { cursor: pointer; flex-wrap: wrap; }
